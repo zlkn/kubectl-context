@@ -66,7 +66,7 @@ const Indicator = GObject.registerClass(
 
     destroy() {
       GLib.Source.remove(this.ticker);
-      this.parent();
+      super.destroy();
     }
 
     getContexts() {
