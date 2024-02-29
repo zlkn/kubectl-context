@@ -1,8 +1,15 @@
 {
-  "uuid": "kubectl-context@bernot.dev",
+  "uuid": "kubectl-context@yzolk.in",
   "name": "kubectl context",
   "description": "Displays kubectl current-context",
   "version": 1,
-  "shell-version": ["3.38", "42"],
+  "shell-version": [
+    "3.38",
+    "42",
+    "44",
+    "44.3",
+    "45",
+    "46"
+  ],
   "url": "https://github.com/bernot-dev/kubectl-context"
 }
