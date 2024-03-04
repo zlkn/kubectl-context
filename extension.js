@@ -22,6 +22,7 @@ const GETTEXT_DOMAIN = "kubectl-context-extension";
 
 const { Clutter, Gio, GLib, GObject, St } = imports.gi;
 
+
 const Gettext = imports.gettext.domain(GETTEXT_DOMAIN);
 const _ = Gettext.gettext;
 
@@ -38,26 +39,51 @@ const Indicator = GObject.registerClass(
     _init() {
       super._init(0.0, _("Kubectl Context Indicator"));
 
+      log(`${Me.metadata.name}: Initializing`);
+
       let box = new St.BoxLayout({ style_class: "panel-status-menu-box" });
       let svg = Gio.icon_new_for_string(Me.path + "/kube.svg");
       let icon = new St.Icon({
         gicon: svg,
         style_class: "system-status-icon",
       });
+
       this.currentContextLabel = new St.Label({
-        text: _("loading"),
+        text: _("loading.."),
         y_align: Clutter.ActorAlign.CENTER,
       });
+
       box.add_child(icon);
       box.add_child(this.currentContextLabel);
       box.add_child(PopupMenu.arrowIcon(St.Side.BOTTOM));
       this.add_child(box);
 
-      let contexts = this.getContexts();
+
+      const homeDir = GLib.get_home_dir();
+      this.configFile = Gio.File.new_for_path(`${homeDir}/.kube/config`);
+
+
+      log(`${Me.metadata.name}: Build monitor service`);
+
+      this.monitor = this.configFile.monitor_file(Gio.FileMonitorFlags.NONE, null);
+
+      this.monitor.connect("changed", (monitor, configFile, otherFile, eventType) => {
+        log(`${Me.metadata.name}: Detected file changes - ${configFile.get_path()}`);
+        this.onFileChanged(monitor, configFile, otherFile, eventType);
+      });
+
+
+      let contexts = this.getClusters();
       contexts.forEach((context) => {
+
         let item = new PopupMenu.PopupMenuItem(_(context));
+
+        log(`Adding context ${item}`);
+        
         item.connect("activate", () => {
-          GLib.spawn_command_line_sync(`kubectl config use-context ${context}`);
+          log(`${Me.metadata.name}: Switching to context ${context}`);
+          GLib.spawn_command_line_async(`kubectl config use-context ${context}`);
+          this.currentContextLabel.queue_redraw();
         });
         this.menu.addMenuItem(item);
       });
@@ -69,43 +95,35 @@ const Indicator = GObject.registerClass(
       super.destroy();
     }
 
-    getContexts() {
-      try {
-        const [ok, standard_output, standard_error, exit_status] =
-          GLib.spawn_command_line_sync("kubectl config get-contexts -oname");
-        if (ok) {
-          let contexts = ByteArray.toString(standard_output).trim();
-          return contexts.split("\n");
-        } else {
-          let err = ByteArray.toString(standard_error).trim();
-          throw new Error(err);
-        }
-      } catch (e) {
-        this.currentContextLabel.set_text(_("error"));
-        logError(e, "ExtensionError");
-      } finally {
-        this.currentContextLabel.queue_redraw();
-      }
-    }
-
     poll() {
       const interval = 1000;
       this.ticker = GLib.timeout_add(GLib.PRIORITY_DEFAULT, interval, () => {
-        this.refreshCurrentContext();
+        this.currentContextLabel.queue_redraw();
         return true;
       });
     }
 
-    refreshCurrentContext() {
+    onFileChanged(monitor, file, otherFile, eventType) {
+      log(`${Me.metadata.name}: Event ${eventType} detected`)
+      if (eventType === Gio.FileMonitorEvent.CHANGES_DONE_HINT) {
+        log(`${Me.metadata.name}: File changed - ${this.configFile.get_path()}`);
+        this.getClusters();
+      }
+    }
+
+    getClusters() {
+      log(`${Me.metadata.name}: Get clusters`);
+
       try {
-        const [ok, standard_output, standard_error, exit_status] =
-          GLib.spawn_command_line_sync("kubectl config current-context");
-        if (ok) {
-          let currentContext = ByteArray.toString(standard_output).trim();
-          this.currentContextLabel.set_text(currentContext);
+        let config = this.readKubeConfig();
+        if (config) {
+          
+          let contextNames = this.extractContextNames(config);
+          contextNames.forEach(name => log(`${Me.metadata.name}: Found cluster: ${name}`));
+
+          return contextNames
         } else {
-          let err = ByteArray.toString(standard_error).trim();
-          throw new Error(err);
+          log('${Me.metadata.name}: Could not read Kubernetes config file.');
         }
       } catch (e) {
         this.currentContextLabel.set_text(_("error"));
@@ -114,8 +132,50 @@ const Indicator = GObject.registerClass(
         this.currentContextLabel.queue_redraw();
       }
     }
-  }
-);
+
+    readKubeConfig() {
+      log(`${Me.metadata.name}: Read kube config`);
+
+      try {
+        let [success, contents] = this.configFile.load_contents(null);
+        if (success) {
+          return ByteArray.toString(contents);
+        }
+      } catch (e) {
+        logError(e, 'Failed to read Kubernetes config file');
+      }
+
+      return null;
+    }
+
+
+    extractContextNames(config) {
+      log(`${Me.metadata.name}: Extract context names`);
+
+      let contextNames = [];
+      let lines = config.split('\n');``
+      let isContextBlock = false;
+
+      for (let line of lines) {
+        line = line.trim();
+
+        if (line.startsWith('current-context:')) {
+          let currentContext = line.split(':')[1].trim();
+          this.currentContextLabel.set_text(currentContext);
+          log(`${Me.metadata.name}: Set current context`);
+        }
+        else if (line.startsWith('- context:')) {
+          isContextBlock = true;
+        } else if (isContextBlock && line.startsWith('name:')) {
+          let contextName = line.split(':')[1].trim();
+          contextNames.push(contextName);
+          isContextBlock = false;
+        }
+      }
+      return contextNames;
+    }
+
+});
 
 class Extension {
   constructor(uuid) {
@@ -124,7 +184,7 @@ class Extension {
 
     ExtensionUtils.initTranslations(GETTEXT_DOMAIN);
   }
-
+  
   enable() {
     log(`${_("enabling")} ${Me.metadata.name}`);
 
