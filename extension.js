@@ -16,33 +16,31 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
-/* exported init */
-
-const GETTEXT_DOMAIN = "kubectl-context-extension";
-
-const { Clutter, Gio, GLib, GObject, St } = imports.gi;
 
 
-const Gettext = imports.gettext.domain(GETTEXT_DOMAIN);
-const _ = Gettext.gettext;
+import Clutter from "gi://Clutter";
+import Gio from "gi://Gio";
+import GLib from "gi://GLib";
+import GObject from "gi://GObject";
+import St from "gi://St";
 
-const ByteArray = imports.byteArray;
-const ExtensionUtils = imports.misc.extensionUtils;
-const Me = ExtensionUtils.getCurrentExtension();
-const Main = imports.ui.main;
-const MainLoop = imports.mainloop;
-const PanelMenu = imports.ui.panelMenu;
-const PopupMenu = imports.ui.popupMenu;
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
+import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
+
+import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 const Indicator = GObject.registerClass(
   class Indicator extends PanelMenu.Button {
-    _init() {
-      super._init(0.0, _("Kubectl Context Indicator"));
+    _init(indicatorName, metadata, isActive) {
+      super._init(0.0, indicatorName);
+      this.metadata = metadata;
+      this.isActive = isActive;
 
-      log(`${Me.metadata.name}: Initializing`);
+      console.error(`${this.metadata.name}: Initializing`);
 
       let box = new St.BoxLayout({ style_class: "panel-status-menu-box" });
-      let svg = Gio.icon_new_for_string(Me.path + "/kube.svg");
+      let svg = Gio.icon_new_for_string(this.metadata.path + "/kube.svg");
       let icon = new St.Icon({
         gicon: svg,
         style_class: "system-status-icon",
@@ -61,27 +59,29 @@ const Indicator = GObject.registerClass(
 
       const homeDir = GLib.get_home_dir();
       this.configFile = Gio.File.new_for_path(`${homeDir}/.kube/config`);
+      console.error(`${this.metadata.name}: Config file ${this.configFile.get_path()}`);
 
 
-      log(`${Me.metadata.name}: Build monitor service`);
+      console.error(`${this.metadata.name}: Build monitor service`);
 
       this.monitor = this.configFile.monitor_file(Gio.FileMonitorFlags.NONE, null);
 
       this.monitor.connect("changed", (monitor, configFile, otherFile, eventType) => {
-        log(`${Me.metadata.name}: Detected file changes - ${configFile.get_path()}`);
+        console.error(`${this.metadata.name}: Detected file changes - ${configFile.get_path()}`);
         this.onFileChanged(monitor, configFile, otherFile, eventType);
       });
 
 
       let contexts = this.getClusters();
+      console.error(`${this.metadata.name}: Contexts ${contexts}`);
       contexts.forEach((context) => {
 
         let item = new PopupMenu.PopupMenuItem(_(context));
 
-        log(`Adding context ${item}`);
+        console.error(`Adding context ${item}`);
         
         item.connect("activate", () => {
-          log(`${Me.metadata.name}: Switching to context ${context}`);
+          console.error(`${this.metadata.name}: Switching to context ${context}`);
           GLib.spawn_command_line_async(`kubectl config use-context ${context}`);
           this.currentContextLabel.queue_redraw();
         });
@@ -104,45 +104,46 @@ const Indicator = GObject.registerClass(
     }
 
     onFileChanged(monitor, file, otherFile, eventType) {
-      log(`${Me.metadata.name}: Event ${eventType} detected`)
+      console.error(`${this.metadata.name}: Event ${eventType} detected`)
       if (eventType === Gio.FileMonitorEvent.CHANGES_DONE_HINT) {
-        log(`${Me.metadata.name}: File changed - ${this.configFile.get_path()}`);
+        console.error(`${this.metadata.name}: File changed - ${this.configFile.get_path()}`);
         this.getClusters();
       }
     }
 
     getClusters() {
-      log(`${Me.metadata.name}: Get clusters`);
+      console.error(`${this.metadata.name}: Get clusters`);
 
       try {
         let config = this.readKubeConfig();
         if (config) {
           
           let contextNames = this.extractContextNames(config);
-          contextNames.forEach(name => log(`${Me.metadata.name}: Found cluster: ${name}`));
+          contextNames.forEach(name => console.error(`${this.metadata.name}: Found cluster: ${name}`));
 
           return contextNames
         } else {
-          log('${Me.metadata.name}: Could not read Kubernetes config file.');
+          console.error(`${this.metadata.name}: Could not read Kubernetes config file.`);
         }
       } catch (e) {
         this.currentContextLabel.set_text(_("error"));
-        logError(e, "ExtensionError");
+        console.error(e, "ExtensionError");
       } finally {
         this.currentContextLabel.queue_redraw();
       }
     }
 
     readKubeConfig() {
-      log(`${Me.metadata.name}: Read kube config`);
+      console.error(`${this.metadata.name}: Read kube config`);
 
       try {
         let [success, contents] = this.configFile.load_contents(null);
         if (success) {
-          return ByteArray.toString(contents);
+          let decoder = new TextDecoder('utf-8');
+          return decoder.decode(contents);
         }
       } catch (e) {
-        logError(e, 'Failed to read Kubernetes config file');
+        console.error(e, 'Failed to read Kubernetes config file');
       }
 
       return null;
@@ -150,7 +151,7 @@ const Indicator = GObject.registerClass(
 
 
     extractContextNames(config) {
-      log(`${Me.metadata.name}: Extract context names`);
+      console.error(`${this.metadata.name}: Extract context names`);
 
       let contextNames = [];
       let lines = config.split('\n');``
@@ -162,7 +163,7 @@ const Indicator = GObject.registerClass(
         if (line.startsWith('current-context:')) {
           let currentContext = line.split(':')[1].trim();
           this.currentContextLabel.set_text(currentContext);
-          log(`${Me.metadata.name}: Set current context`);
+          console.error(`${this.metadata.name}: Set current context`);
         }
         else if (line.startsWith('- context:')) {
           isContextBlock = true;
@@ -177,23 +178,24 @@ const Indicator = GObject.registerClass(
 
 });
 
-class Extension {
-  constructor(uuid) {
-    this._uuid = uuid;
-    this.ticker;
+export default class ExampleExtension extends Extension {
+  constructor(metadata) {
+    super(metadata);
 
-    ExtensionUtils.initTranslations(GETTEXT_DOMAIN);
+    console.debug(`${this.metadata.name}: Constructing`);
+
+    this.ticker;
   }
   
   enable() {
-    log(`${_("enabling")} ${Me.metadata.name}`);
+    console.error(`${_("enabling")} ${this.metadata.name}`);
 
-    this._indicator = new Indicator();
+    this._indicator = new Indicator("kubectl-context-extension", this.metadata, false);
     Main.panel.addToStatusArea(this._uuid, this._indicator);
   }
 
   disable() {
-    log(`${_("disabling")} ${Me.metadata.name}`);
+    console.error(`${_("disabling")} ${this.metadata.name}`);
 
     this._indicator.destroy();
     this._indicator = null;
@@ -201,5 +203,6 @@ class Extension {
 }
 
 function init(meta) {
-  return new Extension(meta.uuid);
+  // return new Extension(meta.uuid);
+  return new Extension(meta);
 }
