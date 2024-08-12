@@ -87,20 +87,11 @@ const Indicator = GObject.registerClass(
         });
         this.menu.addMenuItem(item);
       });
-      this.poll();
     }
 
     destroy() {
       GLib.Source.remove(this.ticker);
       super.destroy();
-    }
-
-    poll() {
-      const interval = 1000;
-      this.ticker = GLib.timeout_add(GLib.PRIORITY_DEFAULT, interval, () => {
-        this.currentContextLabel.queue_redraw();
-        return true;
-      });
     }
 
     onFileChanged(monitor, file, otherFile, eventType) {
